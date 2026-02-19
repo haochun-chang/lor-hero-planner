@@ -23,12 +23,16 @@
     .card { border:1px solid #eee; border-radius: 12px; padding: 10px; margin-top: 10px; }
     .actions { display:flex; gap:8px; flex-wrap: wrap; margin-top: 8px; }
     .modalBackdrop { position: fixed; inset: 0; background: rgba(0,0,0,.35); display:none; align-items: center; justify-content: center; z-index: 999; padding: 12px; }
-    .modal { background: #fff; width: min(520px, 100%); border-radius: 14px; padding: 12px; max-height: 80vh; overflow:auto; }
+    .modal { background: #fff; width: min(560px, 100%); border-radius: 14px; padding: 12px; max-height: 80vh; overflow:auto; }
     .heroList { display:grid; grid-template-columns: 1fr; gap: 8px; margin-top: 10px; }
-    .heroBtn { display:flex; justify-content: space-between; align-items:center; width: 100%; padding: 10px; border:1px solid #ddd; border-radius: 12px; background:#fff; }
+    .heroBtn { display:flex; justify-content: space-between; align-items:center; width: 100%; padding: 10px; border:1px solid #ddd; border-radius: 12px; background:#fff; text-align:left; }
     .heroBtn[disabled] { opacity: .45; }
     .kbd { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
-    textarea { width: 100%; height: 120px; box-sizing: border-box; padding: 8px; }
+    textarea { width: 100%; height: 160px; box-sizing: border-box; padding: 8px; }
+    .split { display:grid; grid-template-columns: 1fr; gap: 10px; }
+    @media (min-width: 880px) { .split { grid-template-columns: 1.2fr .8fr; } }
+    .hint { background:#fafafa; border:1px solid #eee; border-radius: 12px; padding: 10px; }
+    .hint ul { margin: 6px 0 0 20px; }
   </style>
 </head>
 <body>
@@ -41,22 +45,46 @@
   <div id="msg" class="msg-ok">已載入</div>
 
   <div class="card">
-    <div><b>已使用英雄（只顯示有用到的）</b></div>
-    <div id="summary"></div>
+    <div class="split">
+      <div>
+        <div><b>已使用英雄（只顯示有用到的）</b></div>
+        <div id="summary"></div>
 
-    <div class="actions">
-      <button id="btnClear">清空全部</button>
-      <button id="btnExport">匯出</button>
-      <button id="btnImport">匯入</button>
-      <span class="small">（匯出文字可分享給朋友）</span>
-    </div>
+        <div class="actions">
+          <button id="btnSetNames">設定英雄名稱</button>
+          <button id="btnClear">清空全部</button>
+          <button id="btnExport">匯出</button>
+          <button id="btnImport">匯入</button>
+        </div>
 
-    <div id="ioArea" style="display:none; margin-top:10px;">
-      <div class="small">把匯出文字貼到這裡，再按「套用匯入」：</div>
-      <textarea id="ioText" class="kbd" placeholder="貼上匯出文字…"></textarea>
-      <div class="actions">
-        <button id="btnApplyImport">套用匯入</button>
-        <button id="btnCloseIO">關閉</button>
+        <div id="ioArea" style="display:none; margin-top:10px;">
+          <div class="small">匯出/匯入文字：</div>
+          <textarea id="ioText" class="kbd" placeholder="這裡會顯示匯出文字，或貼上匯入文字…"></textarea>
+          <div class="actions">
+            <button id="btnApplyImport">套用匯入</button>
+            <button id="btnCloseIO">關閉</button>
+          </div>
+        </div>
+
+        <div id="nameArea" style="display:none; margin-top:10px;">
+          <div class="small"><b>貼上 81 個英雄真名（每行一個）</b></div>
+          <textarea id="nameText" class="kbd" placeholder="第1行=H01、第2行=H02…第81行=H81&#10;例如：&#10;亞瑟&#10;露娜&#10;…"></textarea>
+          <div class="actions">
+            <button id="btnApplyNames">套用名稱</button>
+            <button id="btnResetNames">恢復預設(H01~H81)</button>
+            <button id="btnCloseNames">關閉</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="hint">
+        <b>小提示</b>
+        <ul class="small">
+          <li>點「未選/已選」可以搜尋英雄。</li>
+          <li>某英雄用到 3 次後，其他關會自動變不可選。</li>
+          <li>資料會自動儲存在你的瀏覽器/手機裡。</li>
+          <li>匯出文字可分享給朋友，匯入即可還原。</li>
+        </ul>
       </div>
     </div>
   </div>
@@ -73,7 +101,7 @@
     </div>
 
     <div style="margin-top:10px;">
-      <input id="heroSearch" type="text" placeholder="搜尋英雄名稱/編號（例如：H01 或 亞瑟）" />
+      <input id="heroSearch" type="text" placeholder="搜尋英雄（可打編號 H01 或名字）" />
     </div>
 
     <div class="actions" style="margin-top:10px;">
@@ -88,22 +116,23 @@
 <script>
   // ===== 可調設定 =====
   const LEVELS = 70;
+  const HERO_COUNT = 81;
   const LIMIT = 3;
 
-  // 英雄清單（你之後把 name 換成遊戲真名即可）
-  const HEROES = Array.from({length: 81}, (_, i) => {
-    const id = `H${String(i+1).padStart(2,'0')}`;
-    return { id, name: id }; // 例如 {id:"H01", name:"亞瑟"} 之後改這裡
-  });
+  // ===== 狀態儲存 key =====
+  const STORAGE_KEY_PLAN = "hero_planner_v2_plan";
+  const STORAGE_KEY_NAMES = "hero_planner_v2_names";
 
-  // ===== 狀態 =====
-  const STORAGE_KEY = "hero_planner_v1";
-  let selections = Array(LEVELS).fill(""); // index 0..69 -> heroId or ""
-  let counts = Object.fromEntries(HEROES.map(h => [h.id, 0]));
+  // ===== 產生英雄 id：H01..H81 =====
+  function heroId(i1based) { return `H${String(i1based).padStart(2,'0')}`; }
 
-  // modal 狀態
-  let activeLevel = null; // 0..69
-  let modalOpen = false;
+  // ===== 英雄名稱表：預設顯示 Hxx；可由使用者在 UI 貼真名覆蓋 =====
+  // heroNames: { "H01": "亞瑟", ... }
+  let heroNames = {};
+
+  // ===== 關卡選擇 =====
+  let selections = Array(LEVELS).fill(""); // 每關 heroId 或 ""
+  let counts = {}; // {heroId: count}
 
   // ===== DOM =====
   const listEl = document.getElementById("list");
@@ -126,55 +155,81 @@
   const btnApplyImport = document.getElementById("btnApplyImport");
   const btnCloseIO = document.getElementById("btnCloseIO");
 
+  const btnSetNames = document.getElementById("btnSetNames");
+  const nameArea = document.getElementById("nameArea");
+  const nameText = document.getElementById("nameText");
+  const btnApplyNames = document.getElementById("btnApplyNames");
+  const btnResetNames = document.getElementById("btnResetNames");
+  const btnCloseNames = document.getElementById("btnCloseNames");
+
+  // modal 狀態
+  let activeLevel = null; // 0..69
+  let modalOpen = false;
+
   // ===== 工具 =====
   function setMessage(text, warn=false) {
     msgEl.className = warn ? "msg-warn" : "msg-ok";
     msgEl.textContent = text;
   }
 
+  function getHeroName(id) {
+    return heroNames[id] || id; // 沒設定真名就顯示 Hxx
+  }
+
   function recomputeCounts() {
-    counts = Object.fromEntries(HEROES.map(h => [h.id, 0]));
-    for (const h of selections) {
-      if (h) counts[h] = (counts[h] || 0) + 1;
-    }
+    counts = {};
+    for (let i = 1; i <= HERO_COUNT; i++) counts[heroId(i)] = 0;
+    for (const h of selections) if (h) counts[h] = (counts[h] || 0) + 1;
   }
 
-  function save() {
-    const payload = { selections };
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+  function savePlan() {
+    localStorage.setItem(STORAGE_KEY_PLAN, JSON.stringify({ selections }));
   }
 
-  function load() {
+  function loadPlan() {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
+      const raw = localStorage.getItem(STORAGE_KEY_PLAN);
       if (!raw) return;
       const data = JSON.parse(raw);
       if (Array.isArray(data.selections) && data.selections.length === LEVELS) {
         selections = data.selections.map(x => (typeof x === "string" ? x : ""));
       }
-    } catch (e) { /* ignore */ }
-    recomputeCounts();
+    } catch (e) {}
   }
 
-  function heroLabel(heroId) {
-    const h = HEROES.find(x => x.id === heroId);
-    return h ? h.name : heroId;
+  function saveNames() {
+    localStorage.setItem(STORAGE_KEY_NAMES, JSON.stringify({ heroNames }));
+  }
+
+  function loadNames() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY_NAMES);
+      if (!raw) return;
+      const data = JSON.parse(raw);
+      if (data && typeof data.heroNames === "object" && data.heroNames) {
+        heroNames = data.heroNames;
+      }
+    } catch (e) {}
   }
 
   function renderSummary() {
-    const used = HEROES.filter(h => (counts[h.id] || 0) > 0)
-      .sort((a,b) => (counts[b.id] - counts[a.id]) || a.id.localeCompare(b.id));
-
     summaryEl.innerHTML = "";
+    const used = [];
+    for (let i = 1; i <= HERO_COUNT; i++) {
+      const id = heroId(i);
+      const c = counts[id] || 0;
+      if (c > 0) used.push({ id, c, name: getHeroName(id) });
+    }
+    used.sort((a,b) => (b.c - a.c) || a.id.localeCompare(b.id));
+
     if (used.length === 0) {
       summaryEl.textContent = "目前尚未選擇任何英雄";
       return;
     }
     for (const h of used) {
       const pill = document.createElement("span");
-      const c = counts[h.id];
-      pill.className = "pill" + (c >= LIMIT ? " full" : "");
-      pill.textContent = `${h.name} ${c}/${LIMIT}`;
+      pill.className = "pill" + (h.c >= LIMIT ? " full" : "");
+      pill.textContent = `${h.name} ${h.c}/${LIMIT}`;
       summaryEl.appendChild(pill);
     }
   }
@@ -194,7 +249,7 @@
       chooser.className = "chooser";
       chooser.id = `choose-${i}`;
       const cur = selections[i];
-      chooser.textContent = cur ? `已選：${heroLabel(cur)}（點我更改）` : "未選（點我選英雄）";
+      chooser.textContent = cur ? `已選：${getHeroName(cur)}（點我更改）` : "未選（點我選英雄）";
       chooser.addEventListener("click", () => openModal(i));
       row.appendChild(chooser);
 
@@ -207,47 +262,47 @@
     }
   }
 
-  function canPick(heroId, levelIdx) {
+  function canPick(heroIdStr, levelIdx) {
     const cur = selections[levelIdx];
-    const c = counts[heroId] || 0;
-    // 若這關已選同一隻英雄，允許（不算新增）
-    if (cur === heroId) return true;
+    const c = counts[heroIdStr] || 0;
+    if (cur === heroIdStr) return true; // 同一格重選同一隻，不算新增
     return c < LIMIT;
   }
 
   function applySelection(levelIdx, newHeroId) {
     const old = selections[levelIdx];
-
     if (old === newHeroId) return;
 
-    // 增量更新 counts
+    // 增量更新
     if (old) counts[old]--;
     if (newHeroId) counts[newHeroId] = (counts[newHeroId] || 0) + 1;
 
-    // 超限 -> 回退並提示
+    // 超限回退
     if (newHeroId && counts[newHeroId] > LIMIT) {
       counts[newHeroId]--;
       if (old) counts[old]++;
-      setMessage(`❌ ${heroLabel(newHeroId)} 已超過上限（最多 ${LIMIT} 次）`, true);
+      setMessage(`❌ ${getHeroName(newHeroId)} 已超過上限（最多 ${LIMIT} 次）`, true);
       return;
     }
 
     selections[levelIdx] = newHeroId || "";
-    save();
+    savePlan();
     renderSummary();
     renderRows();
     if (modalOpen) renderHeroList(heroSearch.value.trim());
-    setMessage("✅ 已更新", false);
+    setMessage("✅ 已更新（自動儲存）", false);
   }
 
-  // ===== Modal =====
+  // ===== Modal：選英雄 =====
   function openModal(levelIdx) {
     activeLevel = levelIdx;
     modalOpen = true;
     modalBackdrop.style.display = "flex";
     modalTitle.textContent = `第${levelIdx+1}關：選擇英雄`;
+
     const cur = selections[levelIdx];
-    modalHint.textContent = cur ? `目前：${heroLabel(cur)}（${counts[cur]}/${LIMIT}）` : "目前：未選";
+    modalHint.textContent = cur ? `目前：${getHeroName(cur)}（${counts[cur]}/${LIMIT}）` : "目前：未選";
+
     heroSearch.value = "";
     renderHeroList("");
     setTimeout(() => heroSearch.focus(), 0);
@@ -263,7 +318,13 @@
     heroList.innerHTML = "";
     const q = query.toLowerCase();
 
-    const filtered = HEROES.filter(h => {
+    const all = [];
+    for (let i = 1; i <= HERO_COUNT; i++) {
+      const id = heroId(i);
+      all.push({ id, name: getHeroName(id), c: counts[id] || 0 });
+    }
+
+    const filtered = all.filter(h => {
       if (!q) return true;
       return h.id.toLowerCase().includes(q) || (h.name || "").toLowerCase().includes(q);
     });
@@ -271,20 +332,18 @@
     for (const h of filtered) {
       const btn = document.createElement("button");
       btn.className = "heroBtn";
-      const c = counts[h.id] || 0;
 
       const left = document.createElement("div");
       left.innerHTML = `<b>${h.name}</b> <span class="small">(${h.id})</span>`;
 
       const right = document.createElement("div");
       right.className = "small";
-      right.textContent = `${c}/${LIMIT}` + (c >= LIMIT ? " 已滿" : "");
+      right.textContent = `${h.c}/${LIMIT}` + (h.c >= LIMIT ? " 已滿" : "");
 
       btn.appendChild(left);
       btn.appendChild(right);
 
-      const disabled = !canPick(h.id, activeLevel);
-      btn.disabled = disabled;
+      btn.disabled = !canPick(h.id, activeLevel);
 
       btn.addEventListener("click", () => {
         applySelection(activeLevel, h.id);
@@ -295,50 +354,90 @@
     }
   }
 
-  // ===== 匯入/匯出 =====
+  // ===== 匯入/匯出（包含英雄名稱） =====
   function exportText() {
-    const payload = { v: 1, selections };
-    const text = btoa(unescape(encodeURIComponent(JSON.stringify(payload))));
-    return text;
+    const payload = { v: 2, selections, heroNames };
+    return btoa(unescape(encodeURIComponent(JSON.stringify(payload))));
   }
 
   function importText(text) {
     const raw = decodeURIComponent(escape(atob(text.trim())));
     const data = JSON.parse(raw);
+
     if (!data || !Array.isArray(data.selections) || data.selections.length !== LEVELS) {
-      throw new Error("格式不正確");
+      throw new Error("匯入格式不正確（缺 selections）");
     }
-    // 只接受存在的 heroId 或空字串
-    const heroSet = new Set(HEROES.map(h => h.id));
-    const next = data.selections.map(x => (heroSet.has(x) ? x : ""));
-    selections = next;
+
+    // 檢查 heroId 合法
+    const heroSet = new Set(Array.from({length:HERO_COUNT}, (_,i)=>heroId(i+1)));
+    const nextSel = data.selections.map(x => (heroSet.has(x) ? x : ""));
+
+    // 名稱可選
+    if (data.heroNames && typeof data.heroNames === "object") {
+      heroNames = data.heroNames;
+      saveNames();
+    }
+
+    selections = nextSel;
     recomputeCounts();
 
-    // 檢查是否有超限（理論上不該有，但保險）
-    for (const h of HEROES) {
-      if ((counts[h.id] || 0) > LIMIT) {
-        throw new Error(`匯入內容超過上限：${h.name}`);
-      }
+    // 超限檢查
+    for (let i = 1; i <= HERO_COUNT; i++) {
+      const id = heroId(i);
+      if ((counts[id] || 0) > LIMIT) throw new Error(`匯入內容超過上限：${getHeroName(id)}`);
     }
 
-    save();
+    savePlan();
     renderSummary();
     renderRows();
+  }
+
+  // ===== 英雄真名：由 UI 貼上 81 行 =====
+  function applyNamesFromTextarea() {
+    const lines = nameText.value
+      .split(/\r?\n/)
+      .map(s => s.trim())
+      .filter(s => s.length > 0);
+
+    if (lines.length !== HERO_COUNT) {
+      setMessage(`❌ 你貼了 ${lines.length} 行；需要剛好 ${HERO_COUNT} 行（每行一個英雄名）`, true);
+      return;
+    }
+
+    const next = {};
+    for (let i = 1; i <= HERO_COUNT; i++) {
+      next[heroId(i)] = lines[i-1];
+    }
+    heroNames = next;
+    saveNames();
+
+    // 重畫 UI
+    renderSummary();
+    renderRows();
+    if (modalOpen) renderHeroList(heroSearch.value.trim());
+
+    setMessage("✅ 英雄真名已套用並儲存", false);
+  }
+
+  function resetNamesToDefault() {
+    heroNames = {};
+    saveNames();
+    renderSummary();
+    renderRows();
+    if (modalOpen) renderHeroList(heroSearch.value.trim());
+    setMessage("✅ 已恢復預設（顯示 H01~H81）", false);
   }
 
   // ===== 事件綁定 =====
   heroSearch.addEventListener("input", () => renderHeroList(heroSearch.value.trim()));
   btnCloseModal.addEventListener("click", closeModal);
   modalBackdrop.addEventListener("click", (e) => { if (e.target === modalBackdrop) closeModal(); });
-  btnUnset.addEventListener("click", () => {
-    if (activeLevel !== null) applySelection(activeLevel, "");
-    closeModal();
-  });
+  btnUnset.addEventListener("click", () => { if (activeLevel !== null) applySelection(activeLevel, ""); closeModal(); });
 
   btnClear.addEventListener("click", () => {
     selections = Array(LEVELS).fill("");
     recomputeCounts();
-    save();
+    savePlan();
     renderSummary();
     renderRows();
     setMessage("✅ 已清空", false);
@@ -346,6 +445,7 @@
 
   btnExport.addEventListener("click", () => {
     ioArea.style.display = "block";
+    nameArea.style.display = "none";
     ioText.value = exportText();
     ioText.focus();
     ioText.select();
@@ -354,6 +454,7 @@
 
   btnImport.addEventListener("click", () => {
     ioArea.style.display = "block";
+    nameArea.style.display = "none";
     ioText.value = "";
     ioText.focus();
     setMessage("把匯出文字貼上後按「套用匯入」", false);
@@ -373,8 +474,30 @@
     ioText.value = "";
   });
 
+  btnSetNames.addEventListener("click", () => {
+    nameArea.style.display = "block";
+    ioArea.style.display = "none";
+
+    // 幫你把目前名稱先帶進去（若未設定則帶 Hxx）
+    const lines = [];
+    for (let i = 1; i <= HERO_COUNT; i++) {
+      const id = heroId(i);
+      lines.push(heroNames[id] || "");
+    }
+    // 如果完全沒設定過，就不預填，避免你看見一堆空白困惑也可；這裡選擇預填空白即可
+    nameText.value = lines.join("\n");
+    nameText.focus();
+    setMessage("貼上 81 行英雄名稱後按「套用名稱」", false);
+  });
+
+  btnApplyNames.addEventListener("click", applyNamesFromTextarea);
+  btnResetNames.addEventListener("click", resetNamesToDefault);
+  btnCloseNames.addEventListener("click", () => { nameArea.style.display = "none"; });
+
   // ===== 啟動 =====
-  load();
+  loadNames();
+  loadPlan();
+  recomputeCounts();
   renderSummary();
   renderRows();
   setMessage("✅ 已載入（會自動儲存）", false);
