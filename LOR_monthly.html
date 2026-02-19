@@ -1,0 +1,383 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>70關 英雄使用檢查</title>
+  <style>
+    :root { --gap: 10px; }
+    body { font-family: system-ui, -apple-system, "PingFang TC", "Noto Sans TC", sans-serif; margin:0; }
+    header { position: sticky; top: 0; background: #fff; border-bottom: 1px solid #ddd; padding: 10px 12px; z-index: 10; }
+    .row { display:flex; gap: var(--gap); align-items:center; padding:8px 12px; border-bottom:1px solid #eee; }
+    .lvl { width: 74px; flex: 0 0 auto; }
+    button { padding: 8px 10px; }
+    input[type="text"] { padding: 8px 10px; width: 100%; box-sizing: border-box; }
+    .pill { display:inline-block; padding: 2px 8px; border:1px solid #ddd; border-radius: 999px; font-size: 12px; margin-right: 6px; margin-top: 6px; }
+    .pill.full { border-color:#b00020; color:#b00020; }
+    .msg-ok { color:#0a7a0a; font-size: 13px; margin-top:6px; }
+    .msg-warn { color:#b00020; font-size: 13px; margin-top:6px; }
+    .grid { display:grid; grid-template-columns: 1fr; }
+    .chooser { flex: 1 1 auto; }
+    .meta { display:flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .small { font-size: 12px; color:#444; }
+    .card { border:1px solid #eee; border-radius: 12px; padding: 10px; margin-top: 10px; }
+    .actions { display:flex; gap:8px; flex-wrap: wrap; margin-top: 8px; }
+    .modalBackdrop { position: fixed; inset: 0; background: rgba(0,0,0,.35); display:none; align-items: center; justify-content: center; z-index: 999; padding: 12px; }
+    .modal { background: #fff; width: min(520px, 100%); border-radius: 14px; padding: 12px; max-height: 80vh; overflow:auto; }
+    .heroList { display:grid; grid-template-columns: 1fr; gap: 8px; margin-top: 10px; }
+    .heroBtn { display:flex; justify-content: space-between; align-items:center; width: 100%; padding: 10px; border:1px solid #ddd; border-radius: 12px; background:#fff; }
+    .heroBtn[disabled] { opacity: .45; }
+    .kbd { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+    textarea { width: 100%; height: 120px; box-sizing: border-box; padding: 8px; }
+  </style>
+</head>
+<body>
+<header>
+  <div class="meta">
+    <b>70關 英雄配置</b>
+    <span class="small">規則：每英雄最多 <b>3</b> 次</span>
+  </div>
+
+  <div id="msg" class="msg-ok">已載入</div>
+
+  <div class="card">
+    <div><b>已使用英雄（只顯示有用到的）</b></div>
+    <div id="summary"></div>
+
+    <div class="actions">
+      <button id="btnClear">清空全部</button>
+      <button id="btnExport">匯出</button>
+      <button id="btnImport">匯入</button>
+      <span class="small">（匯出文字可分享給朋友）</span>
+    </div>
+
+    <div id="ioArea" style="display:none; margin-top:10px;">
+      <div class="small">把匯出文字貼到這裡，再按「套用匯入」：</div>
+      <textarea id="ioText" class="kbd" placeholder="貼上匯出文字…"></textarea>
+      <div class="actions">
+        <button id="btnApplyImport">套用匯入</button>
+        <button id="btnCloseIO">關閉</button>
+      </div>
+    </div>
+  </div>
+</header>
+
+<div id="list" class="grid"></div>
+
+<!-- 選英雄 modal -->
+<div id="modalBackdrop" class="modalBackdrop" role="dialog" aria-modal="true">
+  <div class="modal">
+    <div class="meta">
+      <b id="modalTitle">選擇英雄</b>
+      <span id="modalHint" class="small"></span>
+    </div>
+
+    <div style="margin-top:10px;">
+      <input id="heroSearch" type="text" placeholder="搜尋英雄名稱/編號（例如：H01 或 亞瑟）" />
+    </div>
+
+    <div class="actions" style="margin-top:10px;">
+      <button id="btnUnset">設為未選</button>
+      <button id="btnCloseModal">關閉</button>
+    </div>
+
+    <div id="heroList" class="heroList"></div>
+  </div>
+</div>
+
+<script>
+  // ===== 可調設定 =====
+  const LEVELS = 70;
+  const LIMIT = 3;
+
+  // 英雄清單（你之後把 name 換成遊戲真名即可）
+  const HEROES = Array.from({length: 81}, (_, i) => {
+    const id = `H${String(i+1).padStart(2,'0')}`;
+    return { id, name: id }; // 例如 {id:"H01", name:"亞瑟"} 之後改這裡
+  });
+
+  // ===== 狀態 =====
+  const STORAGE_KEY = "hero_planner_v1";
+  let selections = Array(LEVELS).fill(""); // index 0..69 -> heroId or ""
+  let counts = Object.fromEntries(HEROES.map(h => [h.id, 0]));
+
+  // modal 狀態
+  let activeLevel = null; // 0..69
+  let modalOpen = false;
+
+  // ===== DOM =====
+  const listEl = document.getElementById("list");
+  const msgEl = document.getElementById("msg");
+  const summaryEl = document.getElementById("summary");
+
+  const modalBackdrop = document.getElementById("modalBackdrop");
+  const modalTitle = document.getElementById("modalTitle");
+  const modalHint = document.getElementById("modalHint");
+  const heroSearch = document.getElementById("heroSearch");
+  const heroList = document.getElementById("heroList");
+  const btnCloseModal = document.getElementById("btnCloseModal");
+  const btnUnset = document.getElementById("btnUnset");
+
+  const btnClear = document.getElementById("btnClear");
+  const btnExport = document.getElementById("btnExport");
+  const btnImport = document.getElementById("btnImport");
+  const ioArea = document.getElementById("ioArea");
+  const ioText = document.getElementById("ioText");
+  const btnApplyImport = document.getElementById("btnApplyImport");
+  const btnCloseIO = document.getElementById("btnCloseIO");
+
+  // ===== 工具 =====
+  function setMessage(text, warn=false) {
+    msgEl.className = warn ? "msg-warn" : "msg-ok";
+    msgEl.textContent = text;
+  }
+
+  function recomputeCounts() {
+    counts = Object.fromEntries(HEROES.map(h => [h.id, 0]));
+    for (const h of selections) {
+      if (h) counts[h] = (counts[h] || 0) + 1;
+    }
+  }
+
+  function save() {
+    const payload = { selections };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+  }
+
+  function load() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return;
+      const data = JSON.parse(raw);
+      if (Array.isArray(data.selections) && data.selections.length === LEVELS) {
+        selections = data.selections.map(x => (typeof x === "string" ? x : ""));
+      }
+    } catch (e) { /* ignore */ }
+    recomputeCounts();
+  }
+
+  function heroLabel(heroId) {
+    const h = HEROES.find(x => x.id === heroId);
+    return h ? h.name : heroId;
+  }
+
+  function renderSummary() {
+    const used = HEROES.filter(h => (counts[h.id] || 0) > 0)
+      .sort((a,b) => (counts[b.id] - counts[a.id]) || a.id.localeCompare(b.id));
+
+    summaryEl.innerHTML = "";
+    if (used.length === 0) {
+      summaryEl.textContent = "目前尚未選擇任何英雄";
+      return;
+    }
+    for (const h of used) {
+      const pill = document.createElement("span");
+      const c = counts[h.id];
+      pill.className = "pill" + (c >= LIMIT ? " full" : "");
+      pill.textContent = `${h.name} ${c}/${LIMIT}`;
+      summaryEl.appendChild(pill);
+    }
+  }
+
+  function renderRows() {
+    listEl.innerHTML = "";
+    for (let i = 0; i < LEVELS; i++) {
+      const row = document.createElement("div");
+      row.className = "row";
+
+      const lvl = document.createElement("div");
+      lvl.className = "lvl";
+      lvl.innerHTML = `<b>第${i+1}關</b>`;
+      row.appendChild(lvl);
+
+      const chooser = document.createElement("button");
+      chooser.className = "chooser";
+      chooser.id = `choose-${i}`;
+      const cur = selections[i];
+      chooser.textContent = cur ? `已選：${heroLabel(cur)}（點我更改）` : "未選（點我選英雄）";
+      chooser.addEventListener("click", () => openModal(i));
+      row.appendChild(chooser);
+
+      const info = document.createElement("div");
+      info.className = "small";
+      if (cur) info.textContent = `${counts[cur]}/${LIMIT}`;
+      row.appendChild(info);
+
+      listEl.appendChild(row);
+    }
+  }
+
+  function canPick(heroId, levelIdx) {
+    const cur = selections[levelIdx];
+    const c = counts[heroId] || 0;
+    // 若這關已選同一隻英雄，允許（不算新增）
+    if (cur === heroId) return true;
+    return c < LIMIT;
+  }
+
+  function applySelection(levelIdx, newHeroId) {
+    const old = selections[levelIdx];
+
+    if (old === newHeroId) return;
+
+    // 增量更新 counts
+    if (old) counts[old]--;
+    if (newHeroId) counts[newHeroId] = (counts[newHeroId] || 0) + 1;
+
+    // 超限 -> 回退並提示
+    if (newHeroId && counts[newHeroId] > LIMIT) {
+      counts[newHeroId]--;
+      if (old) counts[old]++;
+      setMessage(`❌ ${heroLabel(newHeroId)} 已超過上限（最多 ${LIMIT} 次）`, true);
+      return;
+    }
+
+    selections[levelIdx] = newHeroId || "";
+    save();
+    renderSummary();
+    renderRows();
+    if (modalOpen) renderHeroList(heroSearch.value.trim());
+    setMessage("✅ 已更新", false);
+  }
+
+  // ===== Modal =====
+  function openModal(levelIdx) {
+    activeLevel = levelIdx;
+    modalOpen = true;
+    modalBackdrop.style.display = "flex";
+    modalTitle.textContent = `第${levelIdx+1}關：選擇英雄`;
+    const cur = selections[levelIdx];
+    modalHint.textContent = cur ? `目前：${heroLabel(cur)}（${counts[cur]}/${LIMIT}）` : "目前：未選";
+    heroSearch.value = "";
+    renderHeroList("");
+    setTimeout(() => heroSearch.focus(), 0);
+  }
+
+  function closeModal() {
+    modalOpen = false;
+    modalBackdrop.style.display = "none";
+    activeLevel = null;
+  }
+
+  function renderHeroList(query) {
+    heroList.innerHTML = "";
+    const q = query.toLowerCase();
+
+    const filtered = HEROES.filter(h => {
+      if (!q) return true;
+      return h.id.toLowerCase().includes(q) || (h.name || "").toLowerCase().includes(q);
+    });
+
+    for (const h of filtered) {
+      const btn = document.createElement("button");
+      btn.className = "heroBtn";
+      const c = counts[h.id] || 0;
+
+      const left = document.createElement("div");
+      left.innerHTML = `<b>${h.name}</b> <span class="small">(${h.id})</span>`;
+
+      const right = document.createElement("div");
+      right.className = "small";
+      right.textContent = `${c}/${LIMIT}` + (c >= LIMIT ? " 已滿" : "");
+
+      btn.appendChild(left);
+      btn.appendChild(right);
+
+      const disabled = !canPick(h.id, activeLevel);
+      btn.disabled = disabled;
+
+      btn.addEventListener("click", () => {
+        applySelection(activeLevel, h.id);
+        closeModal();
+      });
+
+      heroList.appendChild(btn);
+    }
+  }
+
+  // ===== 匯入/匯出 =====
+  function exportText() {
+    const payload = { v: 1, selections };
+    const text = btoa(unescape(encodeURIComponent(JSON.stringify(payload))));
+    return text;
+  }
+
+  function importText(text) {
+    const raw = decodeURIComponent(escape(atob(text.trim())));
+    const data = JSON.parse(raw);
+    if (!data || !Array.isArray(data.selections) || data.selections.length !== LEVELS) {
+      throw new Error("格式不正確");
+    }
+    // 只接受存在的 heroId 或空字串
+    const heroSet = new Set(HEROES.map(h => h.id));
+    const next = data.selections.map(x => (heroSet.has(x) ? x : ""));
+    selections = next;
+    recomputeCounts();
+
+    // 檢查是否有超限（理論上不該有，但保險）
+    for (const h of HEROES) {
+      if ((counts[h.id] || 0) > LIMIT) {
+        throw new Error(`匯入內容超過上限：${h.name}`);
+      }
+    }
+
+    save();
+    renderSummary();
+    renderRows();
+  }
+
+  // ===== 事件綁定 =====
+  heroSearch.addEventListener("input", () => renderHeroList(heroSearch.value.trim()));
+  btnCloseModal.addEventListener("click", closeModal);
+  modalBackdrop.addEventListener("click", (e) => { if (e.target === modalBackdrop) closeModal(); });
+  btnUnset.addEventListener("click", () => {
+    if (activeLevel !== null) applySelection(activeLevel, "");
+    closeModal();
+  });
+
+  btnClear.addEventListener("click", () => {
+    selections = Array(LEVELS).fill("");
+    recomputeCounts();
+    save();
+    renderSummary();
+    renderRows();
+    setMessage("✅ 已清空", false);
+  });
+
+  btnExport.addEventListener("click", () => {
+    ioArea.style.display = "block";
+    ioText.value = exportText();
+    ioText.focus();
+    ioText.select();
+    setMessage("✅ 已產生匯出文字（可複製分享）", false);
+  });
+
+  btnImport.addEventListener("click", () => {
+    ioArea.style.display = "block";
+    ioText.value = "";
+    ioText.focus();
+    setMessage("把匯出文字貼上後按「套用匯入」", false);
+  });
+
+  btnApplyImport.addEventListener("click", () => {
+    try {
+      importText(ioText.value);
+      setMessage("✅ 匯入成功", false);
+    } catch (e) {
+      setMessage("❌ 匯入失敗：" + (e.message || "未知錯誤"), true);
+    }
+  });
+
+  btnCloseIO.addEventListener("click", () => {
+    ioArea.style.display = "none";
+    ioText.value = "";
+  });
+
+  // ===== 啟動 =====
+  load();
+  renderSummary();
+  renderRows();
+  setMessage("✅ 已載入（會自動儲存）", false);
+</script>
+</body>
+</html>
